@@ -663,33 +663,149 @@ export default {
             }
 
             case 'craps': {
-              // Pass line. Entire hand resolved server-side; frontend animates the roll sequence.
-              if (!Number.isFinite(bet) || bet <= 0) return json({ error: 'Invalid bet.' }, 400, corsHeaders);
-              if (bet > userData.balance) return json({ error: 'Not enough chips.' }, 400, corsHeaders);
-              const roll = () => { const a = 1 + Math.floor(Math.random() * 6), b = 1 + Math.floor(Math.random() * 6); return { a, b, t: a + b }; };
-              const rolls = [];
-              let point = null, won = null;
-              const come = roll(); rolls.push(come);
-              if (come.t === 7 || come.t === 11) won = true;
-              else if (come.t === 2 || come.t === 3 || come.t === 12) won = false;
-              else {
-                point = come.t;
-                for (let i = 0; i < 200 && won === null; i++) {
-                  const r = roll(); rolls.push(r);
-                  if (r.t === point) won = true;
-                  else if (r.t === 7) won = false;
-                }
-                if (won === null) won = false;
-              }
-              win = won ? bet : -bet;
-              result = point
-                ? (won ? `Point was ${point} — you hit it! +${bet} chips.` : `Point was ${point} — seven out. -${bet} chips.`)
-                : (won ? `Natural ${come.t}! +${bet} chips.` : `Craps ${come.t}. -${bet} chips.`);
-              userData.balance += win;
-              await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
-              return json({ result, rolls, point, won, win, newBalance: userData.balance, game: 'craps' }, 200, corsHeaders);
-            }
+  if (!Number.isFinite(bet) || bet <= 0) {
+    return json(
+      { error: 'Invalid bet.' },
+      400,
+      corsHeaders
+    );
+  }
 
+  if (bet > userData.balance) {
+    return json(
+      { error: 'Not enough chips.' },
+      400,
+      corsHeaders
+    );
+  }
+
+  const roll = () => {
+    const a = 1 + Math.floor(Math.random() * 6);
+    const b = 1 + Math.floor(Math.random() * 6);
+
+    return {
+      a,
+      b,
+      t: a + b,
+    };
+  };
+
+  const PAYOUTS = {
+    2: 6,
+    3: 3,
+    4: 2,
+    5: 1.5,
+    6: 1.2,
+    8: 1.2,
+    9: 1.5,
+    10: 2,
+    11: 3,
+    12: 6,
+  };
+
+  const PAYOUT_LABELS = {
+    2: '6:1',
+    3: '3:1',
+    4: '2:1',
+    5: '3:2',
+    6: '6:5',
+    8: '6:5',
+    9: '3:2',
+    10: '2:1',
+    11: '3:1',
+    12: '6:1',
+  };
+
+  const rolls = [];
+
+  let point = null;
+  let pointRollIndex = -1;
+
+  /*
+   * Establish any point from 2 through 12 except 7.
+   * A starting 7 is ignored and rolled again.
+   */
+  for (let i = 0; i < 200 && point === null; i += 1) {
+    const openingRoll = roll();
+
+    rolls.push(openingRoll);
+
+    if (openingRoll.t !== 7) {
+      point = openingRoll.t;
+      pointRollIndex = rolls.length - 1;
+    }
+  }
+
+  if (point === null) {
+    return json(
+      { error: 'Unable to establish a point. Please try again.' },
+      500,
+      corsHeaders
+    );
+  }
+
+  let won = null;
+
+  /*
+   * Continue until the player repeats the point or rolls a 7.
+   */
+  for (let i = 0; i < 500 && won === null; i += 1) {
+    const currentRoll = roll();
+
+    rolls.push(currentRoll);
+
+    if (currentRoll.t === point) {
+      won = true;
+    } else if (currentRoll.t === 7) {
+      won = false;
+    }
+  }
+
+  if (won === null) {
+    won = false;
+  }
+
+  const multiplier = PAYOUTS[point];
+  const payoutLabel = PAYOUT_LABELS[point];
+
+  /*
+   * win represents net balance movement:
+   * winning adds the profit; losing removes the wager.
+   */
+  win = won
+    ? Math.round(bet * multiplier)
+    : -bet;
+
+  result = won
+    ? `Point ${point} hit! You won ${win} chips at ${payoutLabel}.`
+    : `Seven out before point ${point}. You lost ${bet} chips.`;
+
+  userData.balance += win;
+
+  await putToCache(
+    env,
+    'CACHE',
+    userKey,
+    JSON.stringify(userData)
+  );
+
+  return json(
+    {
+      result,
+      rolls,
+      point,
+      pointRollIndex,
+      payoutMultiplier: multiplier,
+      payoutLabel,
+      won,
+      win,
+      newBalance: userData.balance,
+      game: 'craps',
+    },
+    200,
+    corsHeaders
+  );
+}
             case 'baccarat': {
               // choice: 'player' | 'banker' | 'tie'. Standard punto banco drawing rules.
               if (!Number.isFinite(bet) || bet <= 0) return json({ error: 'Invalid bet.' }, 400, corsHeaders);
