@@ -514,7 +514,7 @@ export default {
           }
           const picked = pickTriviaQuestion();
           await putToCache(env, 'CACHE', pendingKey, JSON.stringify({ a: picked.a, t: Date.now() }), { expirationTtl: 90 });
-          return json({ question: picked.q, seconds: 10, streak: userData.triviaStreak, pot: userData.triviaPot }, 200, corsHeaders);
+          return json({ question: picked.q, seconds: 15, streak: userData.triviaStreak, pot: userData.triviaPot }, 200, corsHeaders);
         }
 
         if (action === 'trivia-answer' && method === 'POST') {
@@ -536,7 +536,7 @@ export default {
             const lostPot = await forfeit();
             return json({ correct: false, timeout: true, lostPot, pot: 0, streak: 0, newBalance: userData.balance, message: 'No active question — grab a new one.' }, 200, corsHeaders);
           }
-          if (Date.now() - pending.t > 11000) { // 10s + 1s network grace
+          if (Date.now() - pending.t > 16000) { // 15s + 1s network grace
             const lostPot = await forfeit();
             return json({ correct: false, timeout: true, answer: pending.a[0], lostPot, pot: 0, streak: 0, newBalance: userData.balance, message: "Time's up!" }, 200, corsHeaders);
           }
