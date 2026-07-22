@@ -851,19 +851,96 @@ export default {
             }
 
             case 'blackjack': {
-              // Blackjack logic runs client-side; the client reports the net result.
-              // FIX: validate it's a real number and clamp losses to the balance.
-              if (!Number.isFinite(Number(body.netWin))) return json({ error: 'Invalid payload.' }, 400, corsHeaders);
-              win = Number(body.netWin);
-              if (win < 0 && Math.abs(win) > userData.balance) win = -userData.balance;
-              result = body.resultMsg || (win >= 0 ? `You won ${win} chips.` : `You lost ${Math.abs(win)} chips.`);
-              userData.balance += win;
-              await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
-              const response = { result, newBalance: userData.balance, game: 'blackjack' };
-              response.playerCards = playerCards;
-              response.dealerCards = dealerCards;
-              if (bjAction === 'stand' || (bjAction === 'hit' && win < 0)) response.gameOver = true;
-              return json(response, 200, corsHeaders);
+              const stateKey = `blackjack:${userId}`;
+              const ranks = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+              const suits = ['♥','♦','♣','♠'];
+              const makeShoe = () => {
+                const cards = [];
+                for (let d = 0; d < 4; d++) for (const s of suits) for (const v of ranks) cards.push({ v, s, red: s === '♥' || s === '♦' });
+                for (let i = cards.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cards[i], cards[j]] = [cards[j], cards[i]]; }
+                return cards;
+              };
+              const score = (cards) => {
+                let total = 0, aces = 0;
+                for (const c of cards) { if (c.v === 'A') { total += 11; aces++; } else total += ['J','Q','K'].includes(c.v) ? 10 : Number(c.v); }
+                while (total > 21 && aces) { total -= 10; aces--; }
+                return total;
+              };
+              const draw = (st) => { if (!st.shoe || st.shoe.length < 40) st.shoe = makeShoe(); return st.shoe.pop(); };
+              const publicState = (st, message, balance, net = 0) => {
+                const playing = st && st.phase === 'playing';
+                const active = playing ? st.hands[st.activeHand] : null;
+                const canPay = active ? balance >= active.bet : false;
+                return {
+                  game: 'blackjack', phase: st ? st.phase : 'betting', activeHand: st ? st.activeHand : 0,
+                  dealerCards: st ? st.dealer.map((c, i) => playing && i === 1 ? { hidden: true } : c) : [],
+                  dealerScore: st && !playing ? score(st.dealer) : null,
+                  hands: st ? st.hands.map(h => ({ cards: h.cards, bet: h.bet, status: h.status, score: score(h.cards) })) : [],
+                  allowed: active ? { hit: true, stand: true, double: active.cards.length === 2 && canPay, split: active.cards.length === 2 && active.cards[0].v === active.cards[1].v && st.hands.length < 4 && canPay } : {},
+                  result: message || '', win: net, newBalance: balance
+                };
+              };
+              const settle = async (st) => {
+                while (score(st.dealer) < 17) st.dealer.push(draw(st));
+                const ds = score(st.dealer); let returned = 0; let totalStake = 0;
+                for (const h of st.hands) {
+                  const ps = score(h.cards); totalStake += h.bet;
+                  const natural = h.cards.length === 2 && ps === 21 && st.hands.length === 1;
+                  const dealerNatural = st.dealer.length === 2 && ds === 21;
+                  if (ps > 21) h.status = 'bust';
+                  else if (natural && !dealerNatural) { returned += Math.round(h.bet * 2.5); h.status = 'blackjack'; }
+                  else if (dealerNatural && !natural) h.status = 'lose';
+                  else if (ds > 21 || ps > ds) { returned += h.bet * 2; h.status = 'win'; }
+                  else if (ps === ds) { returned += h.bet; h.status = 'push'; }
+                  else h.status = 'lose';
+                }
+                userData.balance += returned;
+                const net = returned - totalStake;
+                st.phase = 'over';
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+                await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
+                const msg = net > 0 ? `You won ${net} chips!` : net < 0 ? `You lost ${Math.abs(net)} chips.` : 'Push — your wager was returned.';
+                return json(publicState(st, msg, userData.balance, net), 200, corsHeaders);
+              };
+              let st = await getFromCache(env, 'CACHE', stateKey, 'json');
+              if (bjAction === 'deal') {
+                if (!Number.isFinite(bet) || bet <= 0) return json({ error: 'Invalid bet.' }, 400, corsHeaders);
+                if (bet > userData.balance) return json({ error: 'Not enough chips.' }, 400, corsHeaders);
+                st = { phase: 'playing', shoe: st && st.shoe ? st.shoe : makeShoe(), dealer: [], hands: [], activeHand: 0 };
+                userData.balance -= bet;
+                st.hands = [{ cards: [draw(st), draw(st)], bet, status: 'active' }]; st.dealer = [draw(st), draw(st)];
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+                const playerNatural = score(st.hands[0].cards) === 21;
+                const dealerNatural = score(st.dealer) === 21;
+                if (playerNatural || dealerNatural) return settle(st);
+                await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
+                return json(publicState(st, 'Your turn.', userData.balance), 200, corsHeaders);
+              }
+              if (!st || st.phase !== 'playing') return json({ error: 'Deal a hand first.' }, 400, corsHeaders);
+              const hand = st.hands[st.activeHand];
+              const advance = async () => {
+                while (st.activeHand < st.hands.length && st.hands[st.activeHand].status !== 'active') st.activeHand++;
+                if (st.activeHand >= st.hands.length) return settle(st);
+                await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
+                return json(publicState(st, 'Your turn.', userData.balance), 200, corsHeaders);
+              };
+              if (bjAction === 'hit') {
+                hand.cards.push(draw(st));
+                if (score(hand.cards) > 21) { hand.status = 'bust'; st.activeHand++; return advance(); }
+                if (score(hand.cards) === 21) { hand.status = 'stand'; st.activeHand++; return advance(); }
+              } else if (bjAction === 'stand') { hand.status = 'stand'; st.activeHand++; return advance(); }
+              else if (bjAction === 'double') {
+                if (hand.cards.length !== 2 || userData.balance < hand.bet) return json({ error: 'Double is not available.' }, 400, corsHeaders);
+                userData.balance -= hand.bet; hand.bet *= 2; hand.cards.push(draw(st)); hand.status = score(hand.cards) > 21 ? 'bust' : 'stand'; st.activeHand++;
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData)); return advance();
+              } else if (bjAction === 'split') {
+                if (hand.cards.length !== 2 || hand.cards[0].v !== hand.cards[1].v || st.hands.length >= 4 || userData.balance < hand.bet) return json({ error: 'Split is not available.' }, 400, corsHeaders);
+                userData.balance -= hand.bet; const second = hand.cards.pop(); const newHand = { cards: [second, draw(st)], bet: hand.bet, status: 'active' }; hand.cards.push(draw(st)); st.hands.splice(st.activeHand + 1, 0, newHand);
+                if (hand.cards[0].v === 'A') { hand.status = 'stand'; newHand.status = 'stand'; st.activeHand += 2; }
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData)); return advance();
+              } else return json({ error: 'Unknown blackjack action.' }, 400, corsHeaders);
+              await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
+              return json(publicState(st, 'Your turn.', userData.balance), 200, corsHeaders);
             }
 
             default:
