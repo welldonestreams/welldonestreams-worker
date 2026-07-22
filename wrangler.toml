@@ -1,0 +1,23 @@
+name = "welldonestreams-form"
+main = "worker.js"
+compatibility_date = "2025-07-16"
+
+[[kv_namespaces]]
+binding = "ACCESS_REQUESTS"
+id = "ece1037779b44475ade17a061f37c73b"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "f470b5b096ac41c9a34e8d33fd6cb0ac"
+
+[[kv_namespaces]]
+binding = "POLL_DATA"
+id = "2b5a8d3efff7470ba121302fc62489e2"
+
+[[kv_namespaces]]
+binding = "REQUESTS_KV"
+id = "2104e645e5dc44d9a65429381c06018e"
+
+[[routes]]
+pattern = "welldonestreams.com/api/*"
+zone_name = "welldonestreams.com"
