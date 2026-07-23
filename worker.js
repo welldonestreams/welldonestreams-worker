@@ -13,7 +13,7 @@
 //  - casino balance falsy bug fixed (0 chips no longer auto-refills to 1000)
 //  - roulette validates total stake from the bets array (bet field is unused there)
 //  - coinflip/slots validate bet is a positive number <= balance
-//  - blackjack netWin validated + loss clamped to current balance
+//  - blackjack cards, state, insurance easter egg, and settlement are server-authoritative
 //  - anonymous casino users key to "casino:default-user" (not "casino:")
 // ============================================================
 
@@ -57,8 +57,8 @@ async function deleteFromCache(env, namespace, key) {
 }
 
 // ---------- Trivia (WellDoneBets) ----------
-// 105 static questions (6th-10th grade) + an infinite math generator.
-// Answers never leave the server; the active answer sits in KV for 20s.
+// Large mixed trivia pool + an infinite, phone-friendly math generator.
+// Answers never leave the server; the active answer sits in KV and immediate repeats are blocked.
 const TRIVIA = [
   ["What is the capital of France?", ["paris"]],
   ["What is the capital of Japan?", ["tokyo"]],
@@ -165,24 +165,109 @@ const TRIVIA = [
   ["What is the currency of Japan?", ["yen", "the yen", "japanese yen"]],
   ["What is the currency of the United Kingdom?", ["pound", "pound sterling", "british pound", "the pound"]],
   ["What is the currency of the United States?", ["dollar", "us dollar", "the dollar", "usd"]],
+  ["What fruit is dried to make a raisin?", ["grape", "a grape", "grapes"]],
+  ["What do bees make?", ["honey"]],
+  ["What is frozen water called?", ["ice"]],
+  ["What is the opposite direction of north?", ["south"]],
+  ["Which instrument has black and white keys?", ["piano", "a piano"]],
+  ["Which animal is famous for black and white stripes?", ["zebra", "a zebra"]],
+  ["Which sea animal has eight arms?", ["octopus", "an octopus"]],
+  ["What is the main ingredient in guacamole?", ["avocado", "an avocado"]],
+  ["What is a baby goat called?", ["kid", "a kid"]],
+  ["What is a group of fish called?", ["school", "a school"]],
+  ["Which animal is said to have nine lives?", ["cat", "a cat"]],
+  ["Which month contains Halloween?", ["october"]],
+  ["What shape is a standard stop sign?", ["octagon", "an octagon"]],
+  ["What color is an emerald?", ["green"]],
+  ["Which fruit has its seeds on the outside?", ["strawberry", "a strawberry"]],
+  ["What gas makes soda fizzy?", ["carbon dioxide", "co2"]],
+  ["Which chess piece moves in an L shape?", ["knight", "the knight"]],
+  ["Which board game includes Boardwalk and Park Place?", ["monopoly"]],
+  ["How many points is a touchdown worth before the extra point?", ["6", "six"]],
+  ["How many days are in a leap year?", ["366"]],
+  ["Which planet is best known for its rings?", ["saturn"]],
+  ["What is the tallest land animal?", ["giraffe", "the giraffe"]],
+  ["What is the largest land animal?", ["african elephant", "elephant", "the african elephant"]],
+  ["Which animal is often called the king of the jungle?", ["lion", "the lion"]],
+  ["What do many caterpillars become?", ["butterfly", "butterflies", "a butterfly"]],
+  ["Which animal commonly sleeps upside down?", ["bat", "a bat", "bats"]],
+  ["What color do red and blue make when mixed as paint?", ["purple"]],
+  ["What is Mario's brother's name?", ["luigi"]],
+  ["What type of Pokémon is Pikachu?", ["electric", "electric type"]],
+  ["What is the name of the toy cowboy in Toy Story?", ["woody"]],
+  ["Which superhero is called the Dark Knight?", ["batman"]],
+  ["What is the name of Shrek's talkative sidekick?", ["donkey"]],
+  ["What is the name of the snowman in Frozen?", ["olaf"]],
+  ["Which video game is known for Creepers?", ["minecraft"]],
+  ["Which yellow video game character eats dots in a maze?", ["pac-man", "pacman"]],
+  ["What is SpongeBob's pet snail named?", ["gary"]],
+  ["What is the fairy's name in Peter Pan?", ["tinker bell", "tinkerbell"]],
+  ["What school does Harry Potter attend?", ["hogwarts", "hogwarts school of witchcraft and wizardry"]],
+  ["What is the middle color on a standard traffic light?", ["yellow", "amber"]],
+  ["Which ocean lies between the United States and Europe?", ["atlantic", "atlantic ocean"]],
+  ["What animal says 'moo'?", ["cow", "a cow"]],
+  ["What do you call a three-sided shape?", ["triangle", "a triangle"]],
+  ["What color are the Smurfs?", ["blue"]],
+  ["What is the name of Superman's home planet?", ["krypton"]],
 ];
 
 function genMathQuestion() {
-  const t = Math.floor(Math.random() * 6);
-  let q, a;
-  if (t === 0) { const x = 2 + Math.floor(Math.random() * 11), y = 2 + Math.floor(Math.random() * 18); q = `What is ${x} × ${y}?`; a = x * y; }
-  else if (t === 1) { const x = 25 + Math.floor(Math.random() * 875), y = 25 + Math.floor(Math.random() * 875); q = `What is ${x} + ${y}?`; a = x + y; }
-  else if (t === 2) { const x = 100 + Math.floor(Math.random() * 900), y = Math.floor(Math.random() * x); q = `What is ${x} − ${y}?`; a = x - y; }
-  else if (t === 3) { const x = 3 + Math.floor(Math.random() * 17); q = `What is ${x} squared?`; a = x * x; }
-  else if (t === 4) { const p = [10, 20, 25, 50][Math.floor(Math.random() * 4)]; const base = [40, 60, 80, 120, 200, 240, 300, 400, 500, 800][Math.floor(Math.random() * 10)]; q = `What is ${p}% of ${base}?`; a = base * p / 100; }
-  else { const y = 2 + Math.floor(Math.random() * 11); const ans = 2 + Math.floor(Math.random() * 12); q = `What is ${y * ans} ÷ ${y}?`; a = ans; }
+  const type = Math.floor(Math.random() * 6);
+  let q;
+  let a;
+
+  if (type === 0) {
+    const x = 10 + Math.floor(Math.random() * 16); // 10-25
+    const y = 10 + Math.floor(Math.random() * 16);
+    q = `What is ${x} × ${y}?`;
+    a = x * y;
+  } else if (type === 1) {
+    const x = 100 + Math.floor(Math.random() * 900);
+    const y = 100 + Math.floor(Math.random() * 900);
+    q = `What is ${x} + ${y}?`;
+    a = x + y;
+  } else if (type === 2) {
+    const x = 20 + Math.floor(Math.random() * 80);
+    const y = 10 + Math.floor(Math.random() * (x - 9));
+    q = `What is ${x} − ${y}?`;
+    a = x - y;
+  } else if (type === 3) {
+    const x = 10 + Math.floor(Math.random() * 11);
+    q = `What is ${x} squared?`;
+    a = x * x;
+  } else if (type === 4) {
+    const percent = [10, 20, 25, 50][Math.floor(Math.random() * 4)];
+    const base = [20, 40, 50, 60, 80, 90][Math.floor(Math.random() * 6)];
+    q = `What is ${percent}% of ${base}?`;
+    a = base * percent / 100;
+  } else {
+    const divisor = 10 + Math.floor(Math.random() * 11);
+    const maxQuotient = Math.max(2, Math.floor(99 / divisor));
+    const quotient = 2 + Math.floor(Math.random() * (maxQuotient - 1));
+    const dividend = divisor * quotient;
+    q = `What is ${dividend} ÷ ${divisor}?`;
+    a = quotient;
+  }
+
   return { q, a: [String(a)] };
 }
 
-function pickTriviaQuestion() {
-  if (Math.random() < 0.5) return genMathQuestion();
-  const p = TRIVIA[Math.floor(Math.random() * TRIVIA.length)];
-  return { q: p[0], a: p[1] };
+function pickTriviaQuestion(lastQuestion = '') {
+  let picked = null;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (Math.random() < 0.45) {
+      picked = genMathQuestion();
+    } else {
+      const p = TRIVIA[Math.floor(Math.random() * TRIVIA.length)];
+      picked = { q: p[0], a: p[1] };
+    }
+    if (picked.q !== lastQuestion) return picked;
+  }
+
+  // The pool is large enough that this should never be needed, but keep
+  // generating until the no-immediate-repeat guarantee is satisfied.
+  do { picked = genMathQuestion(); } while (picked.q === lastQuestion);
+  return picked;
 }
 
 // Fixes Tautulli pushes where the show name arrives doubled ("The PenguinThe Penguin - Season 1")
@@ -482,6 +567,7 @@ export default {
         if (typeof userData.lastClaim !== 'string') userData.lastClaim = '';
         if (typeof userData.triviaStreak !== 'number') userData.triviaStreak = 0;
         if (typeof userData.triviaPot !== 'number') userData.triviaPot = 0;
+        if (typeof userData.triviaLastQuestion !== 'string') userData.triviaLastQuestion = '';
 
         const nowDate = new Date().toISOString().split('T')[0];
 
@@ -512,8 +598,10 @@ export default {
             await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
             await deleteFromCache(env, 'CACHE', pendingKey);
           }
-          const picked = pickTriviaQuestion();
-          await putToCache(env, 'CACHE', pendingKey, JSON.stringify({ a: picked.a, t: Date.now() }), { expirationTtl: 90 });
+          const picked = pickTriviaQuestion(userData.triviaLastQuestion);
+          userData.triviaLastQuestion = picked.q;
+          await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+          await putToCache(env, 'CACHE', pendingKey, JSON.stringify({ a: picked.a, q: picked.q, t: Date.now() }), { expirationTtl: 90 });
           return json({ question: picked.q, seconds: 15, streak: userData.triviaStreak, pot: userData.triviaPot }, 200, corsHeaders);
         }
 
@@ -663,149 +751,73 @@ export default {
             }
 
             case 'craps': {
-  if (!Number.isFinite(bet) || bet <= 0) {
-    return json(
-      { error: 'Invalid bet.' },
-      400,
-      corsHeaders
-    );
-  }
+              if (!Number.isFinite(bet) || bet <= 0) return json({ error: 'Invalid bet.' }, 400, corsHeaders);
+              if (bet > userData.balance) return json({ error: 'Not enough chips.' }, 400, corsHeaders);
 
-  if (bet > userData.balance) {
-    return json(
-      { error: 'Not enough chips.' },
-      400,
-      corsHeaders
-    );
-  }
+              const roll = () => {
+                const a = 1 + Math.floor(Math.random() * 6);
+                const b = 1 + Math.floor(Math.random() * 6);
+                return { a, b, t: a + b };
+              };
 
-  const roll = () => {
-    const a = 1 + Math.floor(Math.random() * 6);
-    const b = 1 + Math.floor(Math.random() * 6);
+              const pointPayouts = { 4: 2, 5: 1.5, 6: 1.2, 8: 1.2, 9: 1.5, 10: 2 };
+              const pointLabels = { 4: '2:1', 5: '3:2', 6: '6:5', 8: '6:5', 9: '3:2', 10: '2:1' };
+              const rolls = [];
+              const comeOut = roll();
+              rolls.push(comeOut);
 
-    return {
-      a,
-      b,
-      t: a + b,
-    };
-  };
+              let point = null;
+              let pointRollIndex = -1;
+              let outcomeType = '';
+              let won = false;
+              let payoutMultiplier = 0;
+              let payoutLabel = '';
 
-  const PAYOUTS = {
-    2: 6,
-    3: 3,
-    4: 2,
-    5: 1.5,
-    6: 1.2,
-    8: 1.2,
-    9: 1.5,
-    10: 2,
-    11: 3,
-    12: 6,
-  };
+              if (comeOut.t === 7 || comeOut.t === 11) {
+                outcomeType = 'comeout-win';
+                won = true;
+                payoutMultiplier = 1;
+                payoutLabel = '1:1';
+                win = bet;
+                result = `${comeOut.t} on the come-out roll — winner! You won ${win} chips.`;
+              } else if (comeOut.t === 2 || comeOut.t === 3 || comeOut.t === 12) {
+                outcomeType = 'craps-loss';
+                won = false;
+                win = -bet;
+                result = `${comeOut.t} on the come-out roll — craps. You lost ${bet} chips.`;
+              } else {
+                outcomeType = 'point';
+                point = comeOut.t;
+                pointRollIndex = 0;
+                payoutMultiplier = pointPayouts[point];
+                payoutLabel = pointLabels[point];
 
-  const PAYOUT_LABELS = {
-    2: '6:1',
-    3: '3:1',
-    4: '2:1',
-    5: '3:2',
-    6: '6:5',
-    8: '6:5',
-    9: '3:2',
-    10: '2:1',
-    11: '3:1',
-    12: '6:1',
-  };
+                for (let i = 0; i < 500; i++) {
+                  const currentRoll = roll();
+                  rolls.push(currentRoll);
+                  if (currentRoll.t === point) {
+                    won = true;
+                    win = Math.round(bet * payoutMultiplier);
+                    result = `Point ${point} hit! You won ${win} chips at ${payoutLabel}.`;
+                    break;
+                  }
+                  if (currentRoll.t === 7) {
+                    won = false;
+                    win = -bet;
+                    result = `Seven out before point ${point}. You lost ${bet} chips.`;
+                    break;
+                  }
+                }
+              }
 
-  const rolls = [];
+              userData.balance += win;
+              await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+              return json({
+                result, rolls, point, pointRollIndex, outcomeType, payoutMultiplier,
+                payoutLabel, won, win, newBalance: userData.balance, game: 'craps'
+              }, 200, corsHeaders);
+            }
 
-  let point = null;
-  let pointRollIndex = -1;
-
-  /*
-   * Establish any point from 2 through 12 except 7.
-   * A starting 7 is ignored and rolled again.
-   */
-  for (let i = 0; i < 200 && point === null; i += 1) {
-    const openingRoll = roll();
-
-    rolls.push(openingRoll);
-
-    if (openingRoll.t !== 7) {
-      point = openingRoll.t;
-      pointRollIndex = rolls.length - 1;
-    }
-  }
-
-  if (point === null) {
-    return json(
-      { error: 'Unable to establish a point. Please try again.' },
-      500,
-      corsHeaders
-    );
-  }
-
-  let won = null;
-
-  /*
-   * Continue until the player repeats the point or rolls a 7.
-   */
-  for (let i = 0; i < 500 && won === null; i += 1) {
-    const currentRoll = roll();
-
-    rolls.push(currentRoll);
-
-    if (currentRoll.t === point) {
-      won = true;
-    } else if (currentRoll.t === 7) {
-      won = false;
-    }
-  }
-
-  if (won === null) {
-    won = false;
-  }
-
-  const multiplier = PAYOUTS[point];
-  const payoutLabel = PAYOUT_LABELS[point];
-
-  /*
-   * win represents net balance movement:
-   * winning adds the profit; losing removes the wager.
-   */
-  win = won
-    ? Math.round(bet * multiplier)
-    : -bet;
-
-  result = won
-    ? `Point ${point} hit! You won ${win} chips at ${payoutLabel}.`
-    : `Seven out before point ${point}. You lost ${bet} chips.`;
-
-  userData.balance += win;
-
-  await putToCache(
-    env,
-    'CACHE',
-    userKey,
-    JSON.stringify(userData)
-  );
-
-  return json(
-    {
-      result,
-      rolls,
-      point,
-      pointRollIndex,
-      payoutMultiplier: multiplier,
-      payoutLabel,
-      won,
-      win,
-      newBalance: userData.balance,
-      game: 'craps',
-    },
-    200,
-    corsHeaders
-  );
-}
             case 'baccarat': {
               // choice: 'player' | 'banker' | 'tie'. Standard punto banco drawing rules.
               if (!Number.isFinite(bet) || bet <= 0) return json({ error: 'Invalid bet.' }, 400, corsHeaders);
@@ -856,67 +868,176 @@ export default {
               const suits = ['♥','♦','♣','♠'];
               const makeShoe = () => {
                 const cards = [];
-                for (let d = 0; d < 4; d++) for (const s of suits) for (const v of ranks) cards.push({ v, s, red: s === '♥' || s === '♦' });
-                for (let i = cards.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cards[i], cards[j]] = [cards[j], cards[i]]; }
+                for (let d = 0; d < 4; d++) {
+                  for (const s of suits) {
+                    for (const v of ranks) cards.push({ v, s, red: s === '♥' || s === '♦' });
+                  }
+                }
+                for (let i = cards.length - 1; i > 0; i--) {
+                  const j = Math.floor(Math.random() * (i + 1));
+                  [cards[i], cards[j]] = [cards[j], cards[i]];
+                }
                 return cards;
               };
               const score = (cards) => {
-                let total = 0, aces = 0;
-                for (const c of cards) { if (c.v === 'A') { total += 11; aces++; } else total += ['J','Q','K'].includes(c.v) ? 10 : Number(c.v); }
-                while (total > 21 && aces) { total -= 10; aces--; }
+                let total = 0;
+                let aces = 0;
+                for (const card of cards) {
+                  if (card.v === 'A') { total += 11; aces++; }
+                  else total += ['J','Q','K'].includes(card.v) ? 10 : Number(card.v);
+                }
+                while (total > 21 && aces > 0) { total -= 10; aces--; }
                 return total;
               };
-              const draw = (st) => { if (!st.shoe || st.shoe.length < 40) st.shoe = makeShoe(); return st.shoe.pop(); };
+              const isNatural = (cards) => cards.length === 2 && score(cards) === 21;
+              const draw = (st) => {
+                if (!st.shoe || st.shoe.length < 40) st.shoe = makeShoe();
+                return st.shoe.pop();
+              };
+              const takeRank = (st, preferred) => {
+                if (!st.shoe || st.shoe.length < 40) st.shoe = makeShoe();
+                for (const rank of preferred) {
+                  const index = st.shoe.findIndex((card) => card.v === rank);
+                  if (index >= 0) return st.shoe.splice(index, 1)[0];
+                }
+                return draw(st);
+              };
+              const prepareLuckyDealer = (st) => {
+                if (st.luckyDealerPrepared) return;
+                // Ace plus a low card keeps the dealer below 17 and removes any
+                // natural blackjack before the deliberately bad dealer draw.
+                if (st.dealer[1]) st.shoe.push(st.dealer[1]);
+                st.dealer[1] = takeRank(st, ['2','3','4','5']);
+                st.luckyDealerPrepared = true;
+              };
               const publicState = (st, message, balance, net = 0) => {
                 const playing = st && st.phase === 'playing';
                 const active = playing ? st.hands[st.activeHand] : null;
                 const canPay = active ? balance >= active.bet : false;
                 return {
-                  game: 'blackjack', phase: st ? st.phase : 'betting', activeHand: st ? st.activeHand : 0,
-                  dealerCards: st ? st.dealer.map((c, i) => playing && i === 1 ? { hidden: true } : c) : [],
+                  game: 'blackjack',
+                  phase: st ? st.phase : 'betting',
+                  activeHand: st ? st.activeHand : 0,
+                  dealerCards: st ? st.dealer.map((card, index) => playing && index === 1 ? { hidden: true } : card) : [],
                   dealerScore: st && !playing ? score(st.dealer) : null,
-                  hands: st ? st.hands.map(h => ({ cards: h.cards, bet: h.bet, status: h.status, score: score(h.cards) })) : [],
-                  allowed: active ? { hit: true, stand: true, double: active.cards.length === 2 && canPay, split: active.cards.length === 2 && active.cards[0].v === active.cards[1].v && st.hands.length < 4 && canPay } : {},
-                  result: message || '', win: net, newBalance: balance
+                  hands: st ? st.hands.map((hand) => ({ cards: hand.cards, bet: hand.bet, status: hand.status, score: score(hand.cards) })) : [],
+                  allowed: active ? {
+                    hit: true,
+                    stand: true,
+                    double: active.cards.length === 2 && canPay,
+                    split: active.cards.length === 2 && active.cards[0].v === active.cards[1].v && st.hands.length < 4 && canPay
+                  } : {},
+                  insuranceOffered: Boolean(playing && st.insuranceStatus === 'offered'),
+                  insuranceLucky: Boolean(st && st.insuranceLucky),
+                  result: message || '',
+                  win: net,
+                  newBalance: balance
                 };
               };
               const settle = async (st) => {
-                while (score(st.dealer) < 17) st.dealer.push(draw(st));
-                const ds = score(st.dealer); let returned = 0; let totalStake = 0;
-                for (const h of st.hands) {
-                  const ps = score(h.cards); totalStake += h.bet;
-                  const natural = h.cards.length === 2 && ps === 21 && st.hands.length === 1;
-                  const dealerNatural = st.dealer.length === 2 && ds === 21;
-                  if (ps > 21) h.status = 'bust';
-                  else if (natural && !dealerNatural) { returned += Math.round(h.bet * 2.5); h.status = 'blackjack'; }
-                  else if (dealerNatural && !natural) h.status = 'lose';
-                  else if (ds > 21 || ps > ds) { returned += h.bet * 2; h.status = 'win'; }
-                  else if (ps === ds) { returned += h.bet; h.status = 'push'; }
-                  else h.status = 'lose';
+                const allBust = st.hands.every((hand) => score(hand.cards) > 21);
+
+                if (st.insuranceLucky && !allBust) {
+                  prepareLuckyDealer(st);
+                  // The easter egg ignores normal stand-on-17 behavior. Keep
+                  // feeding the dealer high cards until the hand is over 21.
+                  let guard = 0;
+                  while (score(st.dealer) <= 21 && guard < 12) {
+                    st.dealer.push(takeRank(st, ['10','J','Q','K','9','8','7']));
+                    guard++;
+                  }
+                } else if (!allBust) {
+                  while (score(st.dealer) < 17) st.dealer.push(draw(st));
                 }
+
+                const dealerScore = score(st.dealer);
+                let returned = 0;
+                let totalStake = 0;
+
+                for (const hand of st.hands) {
+                  const playerScore = score(hand.cards);
+                  totalStake += hand.bet;
+                  const natural = isNatural(hand.cards) && st.hands.length === 1;
+                  const dealerNatural = isNatural(st.dealer);
+
+                  if (playerScore > 21) hand.status = 'bust';
+                  else if (natural && !dealerNatural) { returned += Math.round(hand.bet * 2.5); hand.status = 'blackjack'; }
+                  else if (dealerNatural && !natural) hand.status = 'lose';
+                  else if (dealerScore > 21 || playerScore > dealerScore) { returned += hand.bet * 2; hand.status = 'win'; }
+                  else if (playerScore === dealerScore) { returned += hand.bet; hand.status = 'push'; }
+                  else hand.status = 'lose';
+                }
+
                 userData.balance += returned;
                 const net = returned - totalStake;
                 st.phase = 'over';
+                st.insuranceStatus = 'resolved';
                 await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
                 await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
-                const msg = net > 0 ? `You won ${net} chips!` : net < 0 ? `You lost ${Math.abs(net)} chips.` : 'Push — your wager was returned.';
-                return json(publicState(st, msg, userData.balance, net), 200, corsHeaders);
+                const message = net > 0 ? `You won ${net} chips!` : net < 0 ? `You lost ${Math.abs(net)} chips.` : 'Push — your wager was returned.';
+                return json(publicState(st, message, userData.balance, net), 200, corsHeaders);
               };
+
               let st = await getFromCache(env, 'CACHE', stateKey, 'json');
+
               if (bjAction === 'deal') {
                 if (!Number.isFinite(bet) || bet <= 0) return json({ error: 'Invalid bet.' }, 400, corsHeaders);
                 if (bet > userData.balance) return json({ error: 'Not enough chips.' }, 400, corsHeaders);
-                st = { phase: 'playing', shoe: st && st.shoe ? st.shoe : makeShoe(), dealer: [], hands: [], activeHand: 0 };
+
+                st = {
+                  phase: 'playing',
+                  shoe: st && st.shoe ? st.shoe : makeShoe(),
+                  dealer: [],
+                  hands: [],
+                  activeHand: 0,
+                  insuranceStatus: 'none',
+                  insuranceLucky: false
+                };
                 userData.balance -= bet;
-                st.hands = [{ cards: [draw(st), draw(st)], bet, status: 'active' }]; st.dealer = [draw(st), draw(st)];
+                st.hands = [{ cards: [draw(st), draw(st)], bet, status: 'active' }];
+                st.dealer = [draw(st), draw(st)];
                 await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
-                const playerNatural = score(st.hands[0].cards) === 21;
-                const dealerNatural = score(st.dealer) === 21;
-                if (playerNatural || dealerNatural) return settle(st);
+
+                // Insurance must be answered before checking the hidden card.
+                if (st.dealer[0].v === 'A') {
+                  st.insuranceStatus = 'offered';
+                  await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
+                  return json(publicState(st, 'Dealer shows an Ace — take insurance?', userData.balance), 200, corsHeaders);
+                }
+
+                if (isNatural(st.hands[0].cards) || isNatural(st.dealer)) return settle(st);
                 await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
                 return json(publicState(st, 'Your turn.', userData.balance), 200, corsHeaders);
               }
+
               if (!st || st.phase !== 'playing') return json({ error: 'Deal a hand first.' }, 400, corsHeaders);
+
+              if (bjAction === 'insurance') {
+                if (st.insuranceStatus !== 'offered') return json({ error: 'Insurance is not available.' }, 400, corsHeaders);
+                const takeInsurance = body.take === true;
+                st.insuranceStatus = takeInsurance ? 'taken' : 'declined';
+                st.insuranceLucky = takeInsurance;
+
+                if (takeInsurance) prepareLuckyDealer(st);
+
+                const playerNatural = isNatural(st.hands[0].cards);
+                const dealerNatural = isNatural(st.dealer);
+                if (playerNatural) {
+                  st.hands[0].status = 'stand';
+                  return settle(st);
+                }
+                if (!takeInsurance && dealerNatural) return settle(st);
+
+                await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
+                return json(publicState(
+                  st,
+                  takeInsurance ? 'A very lucky lesson is active. Your turn.' : 'Insurance declined. Your turn.',
+                  userData.balance
+                ), 200, corsHeaders);
+              }
+
+              if (st.insuranceStatus === 'offered') return json({ error: 'Choose Yes or No on insurance first.' }, 400, corsHeaders);
+
               const hand = st.hands[st.activeHand];
               const advance = async () => {
                 while (st.activeHand < st.hands.length && st.hands[st.activeHand].status !== 'active') st.activeHand++;
@@ -924,21 +1045,44 @@ export default {
                 await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
                 return json(publicState(st, 'Your turn.', userData.balance), 200, corsHeaders);
               };
+
               if (bjAction === 'hit') {
                 hand.cards.push(draw(st));
                 if (score(hand.cards) > 21) { hand.status = 'bust'; st.activeHand++; return advance(); }
                 if (score(hand.cards) === 21) { hand.status = 'stand'; st.activeHand++; return advance(); }
-              } else if (bjAction === 'stand') { hand.status = 'stand'; st.activeHand++; return advance(); }
-              else if (bjAction === 'double') {
+              } else if (bjAction === 'stand') {
+                hand.status = 'stand';
+                st.activeHand++;
+                return advance();
+              } else if (bjAction === 'double') {
                 if (hand.cards.length !== 2 || userData.balance < hand.bet) return json({ error: 'Double is not available.' }, 400, corsHeaders);
-                userData.balance -= hand.bet; hand.bet *= 2; hand.cards.push(draw(st)); hand.status = score(hand.cards) > 21 ? 'bust' : 'stand'; st.activeHand++;
-                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData)); return advance();
+                userData.balance -= hand.bet;
+                hand.bet *= 2;
+                hand.cards.push(draw(st));
+                hand.status = score(hand.cards) > 21 ? 'bust' : 'stand';
+                st.activeHand++;
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+                return advance();
               } else if (bjAction === 'split') {
-                if (hand.cards.length !== 2 || hand.cards[0].v !== hand.cards[1].v || st.hands.length >= 4 || userData.balance < hand.bet) return json({ error: 'Split is not available.' }, 400, corsHeaders);
-                userData.balance -= hand.bet; const second = hand.cards.pop(); const newHand = { cards: [second, draw(st)], bet: hand.bet, status: 'active' }; hand.cards.push(draw(st)); st.hands.splice(st.activeHand + 1, 0, newHand);
-                if (hand.cards[0].v === 'A') { hand.status = 'stand'; newHand.status = 'stand'; st.activeHand += 2; }
-                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData)); return advance();
-              } else return json({ error: 'Unknown blackjack action.' }, 400, corsHeaders);
+                if (hand.cards.length !== 2 || hand.cards[0].v !== hand.cards[1].v || st.hands.length >= 4 || userData.balance < hand.bet) {
+                  return json({ error: 'Split is not available.' }, 400, corsHeaders);
+                }
+                userData.balance -= hand.bet;
+                const second = hand.cards.pop();
+                const newHand = { cards: [second, draw(st)], bet: hand.bet, status: 'active' };
+                hand.cards.push(draw(st));
+                st.hands.splice(st.activeHand + 1, 0, newHand);
+                if (hand.cards[0].v === 'A') {
+                  hand.status = 'stand';
+                  newHand.status = 'stand';
+                  st.activeHand += 2;
+                }
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+                return advance();
+              } else {
+                return json({ error: 'Unknown blackjack action.' }, 400, corsHeaders);
+              }
+
               await putToCache(env, 'CACHE', stateKey, JSON.stringify(st));
               return json(publicState(st, 'Your turn.', userData.balance), 200, corsHeaders);
             }
