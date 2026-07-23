@@ -252,7 +252,8 @@ function genMathQuestion() {
   return { q, a: [String(a)] };
 }
 
-function pickTriviaQuestion(lastQuestion = '') {
+function pickTriviaQuestion(recentQuestions = []) {
+  const recent = new Set(Array.isArray(recentQuestions) ? recentQuestions : [recentQuestions]);
   let picked = null;
   for (let attempt = 0; attempt < 40; attempt++) {
     if (Math.random() < 0.45) {
@@ -261,12 +262,12 @@ function pickTriviaQuestion(lastQuestion = '') {
       const p = TRIVIA[Math.floor(Math.random() * TRIVIA.length)];
       picked = { q: p[0], a: p[1] };
     }
-    if (picked.q !== lastQuestion) return picked;
+    if (!recent.has(picked.q)) return picked;
   }
 
-  // The pool is large enough that this should never be needed, but keep
-  // generating until the no-immediate-repeat guarantee is satisfied.
-  do { picked = genMathQuestion(); } while (picked.q === lastQuestion);
+  // Math questions provide an effectively unlimited fallback if random picks
+  // happen to collide with the recent-question window.
+  do { picked = genMathQuestion(); } while (recent.has(picked.q));
   return picked;
 }
 
@@ -598,8 +599,12 @@ export default {
             await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
             await deleteFromCache(env, 'CACHE', pendingKey);
           }
-          const picked = pickTriviaQuestion(userData.triviaLastQuestion);
-          userData.triviaLastQuestion = picked.q;
+          const recentQuestions = Array.isArray(userData.triviaRecentQuestions)
+            ? userData.triviaRecentQuestions
+            : (userData.triviaLastQuestion ? [userData.triviaLastQuestion] : []);
+          const picked = pickTriviaQuestion(recentQuestions);
+          userData.triviaLastQuestion = picked.q; // Keep compatibility with existing player records.
+          userData.triviaRecentQuestions = [...recentQuestions, picked.q].slice(-20);
           await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
           await putToCache(env, 'CACHE', pendingKey, JSON.stringify({ a: picked.a, q: picked.q, t: Date.now() }), { expirationTtl: 90 });
           return json({ question: picked.q, seconds: 15, streak: userData.triviaStreak, pot: userData.triviaPot }, 200, corsHeaders);
@@ -807,6 +812,14 @@ export default {
                     result = `Seven out before point ${point}. You lost ${bet} chips.`;
                     break;
                   }
+                }
+
+                // A round virtually always resolves long before this point,
+                // but never return an unsettled response if the safety cap is hit.
+                if (!result) {
+                  won = false;
+                  win = -bet;
+                  result = `Roll limit reached before point ${point}. You lost ${bet} chips.`;
                 }
               }
 
