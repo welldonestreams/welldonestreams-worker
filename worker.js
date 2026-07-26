@@ -765,6 +765,96 @@ export default {
                 return { a, b, t: a + b };
               };
 
+              const betType = ['pass', 'field', 'place', 'prop'].includes(body.betType) ? body.betType : 'pass';
+              const number = Number(body.number);
+
+              if (betType === 'field') {
+                const FIELD_MULT = { 2: 2, 3: 1, 4: 1, 9: 1, 10: 1, 11: 1, 12: 3 };
+                const comeOut = roll();
+                const rolls = [comeOut];
+                const hit = Object.prototype.hasOwnProperty.call(FIELD_MULT, comeOut.t);
+                const mult = hit ? FIELD_MULT[comeOut.t] : 0;
+                const won = hit;
+                win = hit ? bet * mult : -bet;
+                const payoutLabel = hit ? `${mult}:1` : '';
+                result = hit
+                  ? `${comeOut.t} — Field wins at ${mult}:1! You won ${win} chips.`
+                  : `${comeOut.t} — Field loses. You lost ${bet} chips.`;
+                userData.balance += win;
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+                return json({
+                  result, rolls, betType, number: null, point: null, pointRollIndex: 0,
+                  outcomeType: hit ? 'field-win' : 'field-loss', payoutMultiplier: mult,
+                  payoutLabel, won, win, newBalance: userData.balance, game: 'craps'
+                }, 200, corsHeaders);
+              }
+
+              if (betType === 'prop') {
+                const PROP_MULT = { 2: 30, 3: 15, 11: 15, 12: 30 };
+                if (!PROP_MULT[number]) return json({ error: 'Pick 2, 3, 11, or 12 for a proposition bet.' }, 400, corsHeaders);
+                const comeOut = roll();
+                const rolls = [comeOut];
+                const hit = comeOut.t === number;
+                const mult = PROP_MULT[number];
+                const won = hit;
+                win = hit ? bet * mult : -bet;
+                const payoutLabel = `${mult}:1`;
+                result = hit
+                  ? `${comeOut.t}! ${number} hit on the first roll — you won ${win} chips at ${payoutLabel}.`
+                  : `${comeOut.t} — not ${number}. You lost ${bet} chips.`;
+                userData.balance += win;
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+                return json({
+                  result, rolls, betType, number, point: null, pointRollIndex: 0,
+                  outcomeType: hit ? 'prop-win' : 'prop-loss', payoutMultiplier: mult,
+                  payoutLabel, won, win, newBalance: userData.balance, game: 'craps'
+                }, 200, corsHeaders);
+              }
+
+              if (betType === 'place') {
+                const PLACE_RATIO = { 4: [9, 5], 5: [7, 5], 6: [7, 6], 8: [7, 6], 9: [7, 5], 10: [9, 5] };
+                if (!PLACE_RATIO[number]) return json({ error: 'Pick 4, 5, 6, 8, 9, or 10 for a place bet.' }, 400, corsHeaders);
+                const [num, den] = PLACE_RATIO[number];
+                const payoutLabel = `${num}:${den}`;
+                const rolls = [];
+                let won = false;
+                let outcomeType = '';
+
+                for (let i = 0; i < 500; i++) {
+                  const currentRoll = roll();
+                  rolls.push(currentRoll);
+                  if (currentRoll.t === number) {
+                    won = true;
+                    win = Math.round(bet * num / den);
+                    outcomeType = 'place-win';
+                    result = `${number} hit! You won ${win} chips at ${payoutLabel}.`;
+                    break;
+                  }
+                  if (currentRoll.t === 7) {
+                    won = false;
+                    win = -bet;
+                    outcomeType = 'place-loss';
+                    result = `Seven out before ${number}. You lost ${bet} chips.`;
+                    break;
+                  }
+                }
+
+                if (!result) {
+                  won = false;
+                  win = -bet;
+                  outcomeType = 'place-loss';
+                  result = `Roll limit reached before ${number}. You lost ${bet} chips.`;
+                }
+
+                userData.balance += win;
+                await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
+                return json({
+                  result, rolls, betType, number, point: null, pointRollIndex: rolls.length - 1,
+                  outcomeType, payoutMultiplier: num / den, payoutLabel, won, win,
+                  newBalance: userData.balance, game: 'craps'
+                }, 200, corsHeaders);
+              }
+
               const pointPayouts = { 4: 2, 5: 1.5, 6: 1.2, 8: 1.2, 9: 1.5, 10: 2 };
               const pointLabels = { 4: '2:1', 5: '3:2', 6: '6:5', 8: '6:5', 9: '3:2', 10: '2:1' };
               const rolls = [];
@@ -826,8 +916,8 @@ export default {
               userData.balance += win;
               await putToCache(env, 'CACHE', userKey, JSON.stringify(userData));
               return json({
-                result, rolls, point, pointRollIndex, outcomeType, payoutMultiplier,
-                payoutLabel, won, win, newBalance: userData.balance, game: 'craps'
+                result, rolls, betType, number: null, point, pointRollIndex, outcomeType,
+                payoutMultiplier, payoutLabel, won, win, newBalance: userData.balance, game: 'craps'
               }, 200, corsHeaders);
             }
 
