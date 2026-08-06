@@ -1394,7 +1394,7 @@ export default {
             // Accept a reference image as a base64 data URL (max ~4MB encoded)
             let image = null;
             if (typeof body.image === 'string' && body.image.startsWith('data:image/')) {
-              if (body.image.length > 5_000_000) return json({ error: 'Image too large (max ~3.5MB).' }, 400, corsHeaders);
+              if (body.image.length > 15_000_000) return json({ error: 'Image too large (max ~10MB).' }, 400, corsHeaders);
               image = body.image;
             }
             data.colors.push({
