@@ -1338,6 +1338,102 @@ export default {
         return json({ ok: true }, 200, corsHeaders);
       }
 
+      // ============ SOCCER TEAM: JERSEY COLOR POLL + ROSTER ============
+      if (path === '/api/soccer/poll') {
+        const POLL_KEY = 'soccer:poll';
+        if (method === 'GET') {
+          let data = await getFromCache(env, 'CACHE', POLL_KEY, 'json');
+          if (!data || !Array.isArray(data.colors)) data = { colors: [] };
+          return json(data, 200, corsHeaders);
+        }
+        if (method === 'POST') {
+          let body;
+          try { body = await request.json(); } catch { return json({ error: 'Invalid JSON.' }, 400, corsHeaders); }
+          let data = await getFromCache(env, 'CACHE', POLL_KEY, 'json');
+          if (!data || !Array.isArray(data.colors)) data = { colors: [] };
+
+          if (body.action === 'add') {
+            const colorName = (body.color || '').toString().trim();
+            if (!colorName || colorName.length > 60) return json({ error: 'Color name required (max 60 chars).' }, 400, corsHeaders);
+            if (data.colors.some(c => c.name.toLowerCase() === colorName.toLowerCase()))
+              return json({ error: 'That color already exists.' }, 400, corsHeaders);
+            data.colors.push({
+              name: colorName,
+              hex: (body.hex || '#888888').toString().trim(),
+              votes: [],
+              suggestedBy: (body.suggester || 'Anon').toString().trim().slice(0, 60),
+              addedAt: Date.now(),
+            });
+          } else if (body.action === 'vote') {
+            const target = (body.color || '').toString().trim();
+            const voter = (body.voter || '').toString().trim();
+            if (!target || !voter) return json({ error: 'Color and voter name required.' }, 400, corsHeaders);
+            if (voter.length > 60) return json({ error: 'Voter name too long.' }, 400, corsHeaders);
+            const entry = data.colors.find(c => c.name.toLowerCase() === target.toLowerCase());
+            if (!entry) return json({ error: 'Color not found.' }, 400, corsHeaders);
+            // One vote per person per color
+            if (entry.votes.some(v => v.toLowerCase() === voter.toLowerCase()))
+              return json({ error: 'You already voted for this color.' }, 400, corsHeaders);
+            entry.votes.push(voter);
+          } else if (body.action === 'remove') {
+            const target = (body.color || '').toString().trim();
+            const before = data.colors.length;
+            data.colors = data.colors.filter(c => c.name.toLowerCase() !== target.toLowerCase());
+            if (data.colors.length === before) return json({ error: 'Color not found.' }, 400, corsHeaders);
+          } else {
+            return json({ error: 'Unknown action. Use add, vote, or remove.' }, 400, corsHeaders);
+          }
+          await putToCache(env, 'CACHE', POLL_KEY, JSON.stringify(data), { expirationTtl: 86400 * 120 });
+          return json(data, 200, corsHeaders);
+        }
+      }
+
+      if (path === '/api/soccer/roster') {
+        const ROSTER_KEY = 'soccer:roster';
+        const DEFAULT_ROSTER = [
+          { name: 'Gonzalez', number: '9', size: 'Small' },
+          { name: 'Influenza', number: '7', size: 'Large' },
+          { name: 'Swindle', number: '8', size: 'Large' },
+          { name: 'Melo', number: '10', size: '' },
+          { name: 'Florizzy', number: '3', size: 'Large' },
+          { name: 'Weldon', number: '222', size: 'Large' },
+          { name: 'Roland', number: '11', size: 'Medium' },
+          { name: 'Paz', number: '4', size: 'XL' },
+        ];
+        if (method === 'GET') {
+          let roster = await getFromCache(env, 'CACHE', ROSTER_KEY, 'json');
+          if (!Array.isArray(roster)) {
+            roster = DEFAULT_ROSTER;
+            await putToCache(env, 'CACHE', ROSTER_KEY, JSON.stringify(roster), { expirationTtl: 86400 * 120 });
+          }
+          return json(roster, 200, corsHeaders);
+        }
+        if (method === 'POST') {
+          let body;
+          try { body = await request.json(); } catch { return json({ error: 'Invalid JSON.' }, 400, corsHeaders); }
+          let roster = await getFromCache(env, 'CACHE', ROSTER_KEY, 'json');
+          if (!Array.isArray(roster)) roster = DEFAULT_ROSTER;
+
+          const playerName = (body.name || '').toString().trim();
+          const playerNumber = (body.number || '').toString().trim();
+          const playerSize = (body.size || '').toString().trim();
+          if (!playerName || !playerNumber) return json({ error: 'Name and number required.' }, 400, corsHeaders);
+          if (playerName.length > 60) return json({ error: 'Name too long.' }, 400, corsHeaders);
+          if (playerNumber.length > 10) return json({ error: 'Number too long.' }, 400, corsHeaders);
+          if (playerSize.length > 20) return json({ error: 'Size too long.' }, 400, corsHeaders);
+          // Allow custom sizes but normalize common ones
+          const sz = playerSize ? playerSize.charAt(0).toUpperCase() + playerSize.slice(1).toLowerCase() : '';
+
+          const entry = { name: playerName, number: playerNumber, size: sz || '' };
+          const idx = roster.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
+          if (idx >= 0) roster[idx] = entry;
+          else roster.push(entry);
+
+          await putToCache(env, 'CACHE', ROSTER_KEY, JSON.stringify(roster), { expirationTtl: 86400 * 120 });
+          return json(roster, 200, corsHeaders);
+        }
+      }
+
       return json({ error: 'Not found.' }, 404, corsHeaders);
     } catch (e) {
       return json({ error: 'Server error: ' + e.message }, 500, corsHeaders);
