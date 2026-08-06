@@ -1339,7 +1339,40 @@ export default {
       }
 
       // ============ SOCCER TEAM: JERSEY COLOR POLL + ROSTER ============
-      if (path === '/api/soccer/poll') {
+      // --- Config: phase + submission deadline ---
+      if (path === '/api/soccer/config') {
+        const CFG_KEY = 'soccer:config';
+        const DEFAULT_CFG = {
+          phase: 'submissions',        // 'submissions' | 'voting'
+          submissionDeadline: Date.now() + 3 * 60 * 60 * 1000, // 3 hours from first hit
+          createdBy: 'auto',
+        };
+        if (method === 'GET') {
+          let cfg = await getFromCache(env, 'CACHE', CFG_KEY, 'json');
+          if (!cfg || !cfg.submissionDeadline) {
+            cfg = { ...DEFAULT_CFG, submissionDeadline: Date.now() + 3*60*60*1000 };
+            await putToCache(env, 'CACHE', CFG_KEY, JSON.stringify(cfg), { expirationTtl: 86400 * 30 });
+          } else {
+            // Auto-transition: if past deadline, flip to voting
+            if (cfg.phase === 'submissions' && Date.now() >= cfg.submissionDeadline) {
+              cfg.phase = 'voting';
+              await putToCache(env, 'CACHE', CFG_KEY, JSON.stringify(cfg), { expirationTtl: 86400 * 30 });
+            }
+          }
+          return json(cfg, 200, corsHeaders);
+        }
+        if (method === 'POST') {
+          let body;
+          try { body = await request.json(); } catch { return json({ error: 'Invalid JSON.' }, 400, corsHeaders); }
+          let cfg = await getFromCache(env, 'CACHE', CFG_KEY, 'json') || { ...DEFAULT_CFG };
+          if (body.phase && ['submissions','voting'].includes(body.phase)) cfg.phase = body.phase;
+          if (typeof body.submissionDeadline === 'number') cfg.submissionDeadline = body.submissionDeadline;
+          await putToCache(env, 'CACHE', CFG_KEY, JSON.stringify(cfg), { expirationTtl: 86400 * 30 });
+          return json(cfg, 200, corsHeaders);
+        }
+      }
+
+      // --- Jersey color poll ---
         const POLL_KEY = 'soccer:poll';
         if (method === 'GET') {
           let data = await getFromCache(env, 'CACHE', POLL_KEY, 'json');
@@ -1357,9 +1390,16 @@ export default {
             if (!colorName || colorName.length > 60) return json({ error: 'Color name required (max 60 chars).' }, 400, corsHeaders);
             if (data.colors.some(c => c.name.toLowerCase() === colorName.toLowerCase()))
               return json({ error: 'That color already exists.' }, 400, corsHeaders);
+            // Accept a reference image as a base64 data URL (max ~4MB encoded)
+            let image = null;
+            if (typeof body.image === 'string' && body.image.startsWith('data:image/')) {
+              if (body.image.length > 5_000_000) return json({ error: 'Image too large (max ~3.5MB).' }, 400, corsHeaders);
+              image = body.image;
+            }
             data.colors.push({
               name: colorName,
               hex: (body.hex || '#888888').toString().trim(),
+              image: image,
               votes: [],
               suggestedBy: (body.suggester || 'Anon').toString().trim().slice(0, 60),
               addedAt: Date.now(),
