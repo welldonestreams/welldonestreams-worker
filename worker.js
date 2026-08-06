@@ -1473,6 +1473,17 @@ export default {
           await putToCache(env, 'CACHE', ROSTER_KEY, JSON.stringify(roster), { expirationTtl: 86400 * 120 });
           return json(roster, 200, corsHeaders);
         }
+        if (method === 'DELETE') {
+          const delName = (url.searchParams.get('name') || '').toString().trim();
+          if (!delName) return json({ error: 'name query param required.' }, 400, corsHeaders);
+          let roster = await getFromCache(env, 'CACHE', ROSTER_KEY, 'json');
+          if (!Array.isArray(roster)) roster = DEFAULT_ROSTER;
+          const before = roster.length;
+          roster = roster.filter(p => p.name.toLowerCase() !== delName.toLowerCase());
+          if (roster.length === before) return json({ error: 'Player not found.' }, 404, corsHeaders);
+          await putToCache(env, 'CACHE', ROSTER_KEY, JSON.stringify(roster), { expirationTtl: 86400 * 120 });
+          return json({ ok: true, deleted: delName }, 200, corsHeaders);
+        }
       }
 
       return json({ error: 'Not found.' }, 404, corsHeaders);
