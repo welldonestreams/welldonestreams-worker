@@ -1467,6 +1467,8 @@ export default {
           const playerName = (body.name || '').toString().trim();
           const playerNumber = (body.number || '').toString().trim();
           const playerSize = (body.size || '').toString().trim();
+          const playerSleeve = (body.sleeve || '').toString().trim();
+          const playerShorts = (body.shorts || '').toString().trim();
           if (!playerName || !playerNumber) return json({ error: 'Name and number required.' }, 400, corsHeaders);
           if (playerName.length > 60) return json({ error: 'Name too long.' }, 400, corsHeaders);
           if (playerNumber.length > 10) return json({ error: 'Number too long.' }, 400, corsHeaders);
@@ -1474,7 +1476,7 @@ export default {
           // Allow custom sizes but normalize common ones
           const sz = playerSize ? playerSize.charAt(0).toUpperCase() + playerSize.slice(1).toLowerCase() : '';
 
-          const entry = { name: playerName, number: playerNumber, size: sz || '' };
+          const entry = { name: playerName, number: playerNumber, size: sz || '', sleeve: playerSleeve, shorts: playerShorts };
           const idx = roster.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
           if (idx >= 0) roster[idx] = entry;
           else roster.push(entry);
