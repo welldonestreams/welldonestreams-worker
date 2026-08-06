@@ -1421,6 +1421,15 @@ export default {
             const before = data.colors.length;
             data.colors = data.colors.filter(c => c.name.toLowerCase() !== target.toLowerCase());
             if (data.colors.length === before) return json({ error: 'Color not found.' }, 400, corsHeaders);
+          } else if (body.action === 'unvote') {
+            const target = (body.color || '').toString().trim();
+            const voter = (body.voter || '').toString().trim();
+            if (!target || !voter) return json({ error: 'Color and voter name required.' }, 400, corsHeaders);
+            const entry = data.colors.find(c => c.name.toLowerCase() === target.toLowerCase());
+            if (!entry) return json({ error: 'Color not found.' }, 400, corsHeaders);
+            const before = entry.votes.length;
+            entry.votes = entry.votes.filter(v => v.toLowerCase() !== voter.toLowerCase());
+            if (entry.votes.length === before) return json({ error: 'Vote not found.' }, 400, corsHeaders);
           } else {
             return json({ error: 'Unknown action. Use add, vote, or remove.' }, 400, corsHeaders);
           }
