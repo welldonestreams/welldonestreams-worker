@@ -1373,6 +1373,7 @@ export default {
       }
 
       // --- Jersey color poll ---
+      if (path === '/api/soccer/poll') {
         const POLL_KEY = 'soccer:poll';
         if (method === 'GET') {
           let data = await getFromCache(env, 'CACHE', POLL_KEY, 'json');
