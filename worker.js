@@ -211,39 +211,49 @@ const TRIVIA = [
   ["What is the name of Superman's home planet?", ["krypton"]],
 ];
 
+function randInt(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function randWithDigits(d) {
+  const lo = d === 1 ? 1 : Math.pow(10, d - 1);
+  const hi = Math.pow(10, d) - 1;
+  return randInt(lo, hi);
+}
+
 function genMathQuestion() {
-  const type = Math.floor(Math.random() * 6);
+  const type = Math.floor(Math.random() * 4);
   let q;
   let a;
 
   if (type === 0) {
-    const x = 10 + Math.floor(Math.random() * 16); // 10-25
-    const y = 10 + Math.floor(Math.random() * 16);
+    // Multiplication: always a 2-digit number × a 1-digit number
+    const x = randWithDigits(2);
+    const y = randInt(2, 9);
     q = `What is ${x} × ${y}?`;
     a = x * y;
   } else if (type === 1) {
-    const x = 100 + Math.floor(Math.random() * 900);
-    const y = 100 + Math.floor(Math.random() * 900);
+    // Addition: any 1–3 digit combination (3+3, 3+2, 2+3, 2+2, 2+1, 1+2, 1+1, 1+3, 3+1)
+    const x = randWithDigits(1 + Math.floor(Math.random() * 3));
+    const y = randWithDigits(1 + Math.floor(Math.random() * 3));
     q = `What is ${x} + ${y}?`;
     a = x + y;
   } else if (type === 2) {
-    const x = 20 + Math.floor(Math.random() * 80);
-    const y = 10 + Math.floor(Math.random() * (x - 9));
+    // Subtraction: only 3-3, 3-2, 2-2, 2-1 (never a 1-digit first number, never 3-1)
+    const dx = randInt(2, 3);
+    const dy = dx === 3 ? randInt(2, 3) : randInt(1, 2);
+    const x = randInt(Math.pow(10, dx - 1) + 1, Math.pow(10, dx) - 1);
+    const yLo = dy === 1 ? 1 : Math.pow(10, dy - 1);
+    const yHi = Math.min(Math.pow(10, dy) - 1, x - 1);
+    const y = randInt(yLo, yHi);
     q = `What is ${x} − ${y}?`;
     a = x - y;
-  } else if (type === 3) {
-    const x = 10 + Math.floor(Math.random() * 11);
-    q = `What is ${x} squared?`;
-    a = x * x;
-  } else if (type === 4) {
-    const percent = [10, 20, 25, 50][Math.floor(Math.random() * 4)];
-    const base = [20, 40, 50, 60, 80, 90][Math.floor(Math.random() * 6)];
-    q = `What is ${percent}% of ${base}?`;
-    a = base * percent / 100;
   } else {
-    const divisor = 10 + Math.floor(Math.random() * 11);
-    const maxQuotient = Math.max(2, Math.floor(99 / divisor));
-    const quotient = 2 + Math.floor(Math.random() * (maxQuotient - 1));
+    // Division: always a 2-digit number ÷ a 1-digit number, clean quotient
+    const divisor = randInt(2, 9);
+    const qLo = Math.ceil(10 / divisor);
+    const qHi = Math.floor(99 / divisor);
+    const quotient = randInt(qLo, qHi);
     const dividend = divisor * quotient;
     q = `What is ${dividend} ÷ ${divisor}?`;
     a = quotient;
