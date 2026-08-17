@@ -1301,11 +1301,12 @@ export default {
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'Valid email required.' }, 400, corsHeaders);
         if (!env.PLEX_TOKEN || !env.PLEX_MACHINE_ID) return json({ error: 'Plex not configured on the server.' }, 500, corsHeaders);
         const clientId = env.PLEX_CLIENT_ID || 'welldonestreams-admin';
+        const sectionIds = (env.PLEX_LIBRARY_IDS || '1,2,6,7,8').split(',').map(s => parseInt(s, 10)).filter(n => !isNaN(n));
         const plexUrl = `https://plex.tv/api/v2/shared_servers?X-Plex-Client-Identifier=${encodeURIComponent(clientId)}&X-Plex-Token=${encodeURIComponent(env.PLEX_TOKEN)}`;
         const plexBody = {
           machineIdentifier: env.PLEX_MACHINE_ID,
           invitedEmail: email,
-          librarySectionIds: [],
+          librarySectionIds: sectionIds,
           settings: { allowSync: '1', allowChannels: '0', allowTuners: '0' },
         };
         let plexRes, plexText;
@@ -1317,14 +1318,14 @@ export default {
           });
           plexText = await plexRes.text();
         } catch (e) {
-          return json({ error: 'Could not reach Plex: ' + e.message }, 502, corsHeaders);
+          return json({ error: 'Could not reach Plex.' }, 502, corsHeaders);
         }
         if (plexRes.status === 422) {
           if (body.id) await markInvited(env, body.id);
           return json({ ok: true, already: true, message: 'Already shared with that account.' }, 200, corsHeaders);
         }
         if (!plexRes.ok) {
-          return json({ error: `Plex returned ${plexRes.status}: ${plexText.slice(0, 300)}` }, 502, corsHeaders);
+          return json({ error: 'Plex invite failed.' }, 502, corsHeaders);
         }
         if (body.id) await markInvited(env, body.id);
         return json({ ok: true, message: 'Invite sent!' }, 200, corsHeaders);

@@ -1,6 +1,7 @@
 name = "welldonestreams-form"
 main = "worker.js"
 compatibility_date = "2025-07-16"
+account_id = "b4eb4b52e2470470f0acba44de357e3c"
 
 [[kv_namespaces]]
 binding = "ACCESS_REQUESTS"
