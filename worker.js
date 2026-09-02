@@ -1301,19 +1301,51 @@ export default {
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'Valid email required.' }, 400, corsHeaders);
         if (!env.PLEX_TOKEN || !env.PLEX_MACHINE_ID) return json({ error: 'Plex not configured on the server.' }, 500, corsHeaders);
         const clientId = env.PLEX_CLIENT_ID || 'welldonestreams-admin';
-        const sectionIds = (env.PLEX_LIBRARY_IDS || '1,2,6,7,8').split(',').map(s => parseInt(s, 10)).filter(n => !isNaN(n));
-        const plexUrl = `https://plex.tv/api/v2/shared_servers?X-Plex-Client-Identifier=${encodeURIComponent(clientId)}&X-Plex-Token=${encodeURIComponent(env.PLEX_TOKEN)}`;
+        // plex.tv account-level section IDs (NOT server-local keys). Resolve them
+        // from the machine's share manifest: GET /api/servers/{mid} returns
+        // <Section id= title=> per shared library. Local keys 1,2,6,7,8 map to
+        // Movies, TV Shows, Anime, Kids TV, Kids Movies by title.
+        const wantTitles = ['Movies', 'TV Shows', 'Anime', 'Kids TV', 'Kids Movies'];
+        let sectionIds = [];
+        try {
+          const srvRes = await fetch(`https://plex.tv/api/servers/${env.PLEX_MACHINE_ID}`, {
+            headers: { 'X-Plex-Token': env.PLEX_TOKEN, 'Accept': 'application/xml' },
+          });
+          if (srvRes.ok) {
+            const srvXml = await srvRes.text();
+            const re = /<Section\s+id="(\d+)"\s+title="([^"]*)"\s+type="([^"]*)"/g;
+            let m;
+            while ((m = re.exec(srvXml)) !== null) {
+              if (wantTitles.includes(m[2])) sectionIds.push(parseInt(m[1], 10));
+            }
+          }
+        } catch (e) { /* fall through to env override */ }
+        if (!sectionIds.length && env.PLEX_LIBRARY_IDS) {
+          // env override uses plex.tv account section ids (comma-separated)
+          sectionIds = env.PLEX_LIBRARY_IDS.split(',').map(s => parseInt(s, 10)).filter(n => !isNaN(n));
+        }
+        if (!sectionIds.length) return json({ error: 'Could not resolve Plex libraries to share.' }, 500, corsHeaders);
+        // Legacy endpoint — /api/v2/shared_servers is gone (404). The invite body
+        // must carry plex.tv account section ids, not server-local keys.
+        const plexUrl = `https://plex.tv/api/servers/${env.PLEX_MACHINE_ID}/shared_servers`;
+        const plexHeaders = {
+          'X-Plex-Token': env.PLEX_TOKEN,
+          'X-Plex-Client-Identifier': clientId,
+          'X-Plex-Product': 'WelldoneStreams',
+          'X-Plex-Platform': 'Cloudflare Worker',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        };
         const plexBody = {
-          machineIdentifier: env.PLEX_MACHINE_ID,
-          invitedEmail: email,
-          librarySectionIds: sectionIds,
-          settings: { allowSync: '1', allowChannels: '0', allowTuners: '0' },
+          server_id: env.PLEX_MACHINE_ID,
+          shared_server: { library_section_ids: sectionIds, invited_email: email },
+          sharing_settings: { allowSync: '1', allowChannels: '0', allowCameraUpload: '0' },
         };
         let plexRes, plexText;
         try {
           plexRes = await fetch(plexUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            headers: plexHeaders,
             body: JSON.stringify(plexBody),
           });
           plexText = await plexRes.text();
