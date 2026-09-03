@@ -366,7 +366,7 @@ async function markInvited(env, id) {
   }
 }
 
-function getMediaTitle(media, type) {
+async function getMediaTitle(media, type, env) {
   if (!media) return 'Untitled request';
   if (type === 'movie') {
     const dl2 = media.downloadStatus?.[0];
@@ -374,9 +374,46 @@ function getMediaTitle(media, type) {
       const clean = dl2.title.split('.').slice(0, -1).join(' ').replace(/(1080p|2160p|4K|BluRay|WEB-DL|HDR|REMUX)/gi, '').trim();
       return clean || dl2.title;
     }
+    // Movies carry only a tmdbId in Seerr's list API — resolve the title via TMDB (KV-cached).
+    const tmdbId = media.tmdbId;
+    if (tmdbId && env?.TMDB_API_KEY) {
+      const cacheKey = `tmdb:movie:${tmdbId}`;
+      const cached = await getFromCache(env, 'CACHE', cacheKey, 'json');
+      if (cached?.title) return cached.title;
+      try {
+        const res = await fetch(`https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdbId)}?api_key=${env.TMDB_API_KEY}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.title) {
+            await putToCache(env, 'CACHE', cacheKey, JSON.stringify({ title: data.title }), { expirationTtl: 86400 * 90 });
+            return data.title;
+          }
+        }
+      } catch (e) { /* fall through */ }
+    }
   }
   if (type === 'tv' && media.externalServiceSlug) {
     return media.externalServiceSlug.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  }
+  // Generic fallback: resolve ANY media with a tmdbId via TMDB (KV-cached) —
+  // covers movies, and TV requests that never got a slug.
+  const tmdbId = media.tmdbId;
+  if (tmdbId && env?.TMDB_API_KEY) {
+    const kind = type === 'movie' ? 'movie' : 'tv';
+    const cacheKey = `tmdb:${kind}:${tmdbId}`;
+    const cached = await getFromCache(env, 'CACHE', cacheKey, 'json');
+    if (cached?.title) return cached.title;
+    try {
+      const res = await fetch(`https://api.themoviedb.org/3/${kind}/${encodeURIComponent(tmdbId)}?api_key=${env.TMDB_API_KEY}`);
+      if (res.ok) {
+        const data = await res.json();
+        const title = data?.title || data?.name;
+        if (title) {
+          await putToCache(env, 'CACHE', cacheKey, JSON.stringify({ title }), { expirationTtl: 86400 * 90 });
+          return title;
+        }
+      }
+    } catch (e) { /* fall through */ }
   }
   const dl = media.downloadStatus?.[0];
   if (dl?.title) return dl.title;
@@ -534,16 +571,18 @@ export default {
           if (!res.ok) return json({ error: 'Could not reach the request server.' }, 502, corsHeaders);
           const data = await res.json();
           const wanted = email.toLowerCase();
-          const mine = (data.results || [])
-            .filter((r) => {
-              const e = r.requestedBy?.email || r.requestedBy?.plexUsername || '';
-              return String(e).toLowerCase() === wanted;
-            })
-            .map((r) => ({
-              title: getMediaTitle(r.media, r.type),
-              status: mapSeerrStatus(r.status),
-              type: r.type === 'movie' ? 'Movie' : 'Show',
-            }));
+          const mine = await Promise.all(
+            (data.results || [])
+              .filter((r) => {
+                const e = r.requestedBy?.email || r.requestedBy?.plexUsername || '';
+                return String(e).toLowerCase() === wanted;
+              })
+              .map(async (r) => ({
+                title: await getMediaTitle(r.media, r.type, env),
+                status: mapSeerrStatus(r.status),
+                type: r.type === 'movie' ? 'Movie' : 'Show',
+              }))
+          );
           return json({ requests: mine }, 200, corsHeaders);
         } catch (e) {
           return json({ error: 'Could not reach the request server.' }, 502, corsHeaders);
