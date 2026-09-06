@@ -1251,8 +1251,11 @@ export default {
       if (path === '/api/poll/admin' && method === 'PUT') {
         if (!isAdmin()) return json({ error: 'Forbidden.' }, 403, corsHeaders);
         const { options } = await request.json();
-        if (!Array.isArray(options) || options.length === 0) return json({ error: 'options must be a non-empty array.' }, 400, corsHeaders);
+        // An empty array deliberately disables the poll; malformed entries must
+        // still fail before writing options/counts or advancing the version.
+        if (!Array.isArray(options)) return json({ error: 'options must be an array.' }, 400, corsHeaders);
         const normalized = options.map((opt) => (typeof opt === 'string' ? { name: opt, poster: null } : opt));
+        if (normalized.some(opt => !opt || typeof opt.name !== 'string' || !opt.name.trim())) return json({ error: 'Each option needs a name.' }, 400, corsHeaders);
         await putToCache(env, 'POLL_DATA', 'options', JSON.stringify(normalized));
         const counts = {};
         normalized.forEach((o) => { counts[o.name] = 0; });
