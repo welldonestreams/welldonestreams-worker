@@ -343,12 +343,18 @@ function safeJSONParse(str, fallback) {
   }
 }
 
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[char]));
+}
+
 function json(data, status = 200, extra = {}) {
-  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', ...extra } });
+  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extra } });
 }
 
 function text(body, status = 200, extra = {}) {
-  return new Response(body, { status, headers: { 'Content-Type': 'text/plain', ...extra } });
+  return new Response(body, { status, headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extra } });
 }
 
 function mapSeerrStatus(s) {
@@ -446,13 +452,15 @@ export default {
 
     if (method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-    const isAdmin = () => (request.headers.get('Authorization') || '') === `Bearer ${env.ADMIN_POLL_TOKEN}`;
+    const isAdmin = () => Boolean(env.ADMIN_POLL_TOKEN) &&
+      request.headers.get('Authorization') === `Bearer ${env.ADMIN_POLL_TOKEN}`;
 
     try {
       // ============ PUBLIC: ACCESS REQUEST FORM ============
       if (path === '/api/submit' && method === 'POST') {
         const { name, email } = await request.json();
-        if (!name || !email) return json({ error: 'Name and email are required.' }, 400, corsHeaders);
+        if (typeof name !== 'string' || typeof email !== 'string' || !name.trim() || !email.trim())
+          return json({ error: 'Name and email are required.' }, 400, corsHeaders);
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'Please enter a valid email address.' }, 400, corsHeaders);
         if (name.length > 200 || email.length > 200) return json({ error: 'Input too long.' }, 400, corsHeaders);
 
@@ -481,8 +489,8 @@ export default {
               body: JSON.stringify({
                 from: 'Well Done Streams <noreply@welldonestreams.com>',
                 to: ['support@welldonestreams.com'],
-                subject: `New access request from ${name}`,
-                html: `<p><strong>${name}</strong> (${email}) wants access to Plex.</p>
+                subject: `New access request from ${name.replace(/[\r\n]/g, ' ')}`,
+                html: `<p><strong>${escapeHTML(name)}</strong> (${escapeHTML(email)}) wants access to Plex.</p>
                        <p>Use the <a href="https://welldonestreams.com/admin.html">admin panel</a> to invite them.</p>`,
               }),
             });
@@ -502,7 +510,7 @@ export default {
 
       // ============ PUBLIC: RECENTLY ADDED (Tautulli pipeline) ============
       if (path === '/api/recent-push' && method === 'POST') {
-        if ((request.headers.get('Authorization') || '') !== `Bearer ${env.TAUTULLI_PUSH_TOKEN}`)
+        if (!env.TAUTULLI_PUSH_TOKEN || request.headers.get('Authorization') !== `Bearer ${env.TAUTULLI_PUSH_TOKEN}`)
           return json({ error: 'Unauthorized' }, 401, corsHeaders);
         let body;
         try { body = await request.json(); } catch { return json({ error: 'Invalid JSON.' }, 400, corsHeaders); }
@@ -557,7 +565,7 @@ export default {
       // ============ PUBLIC: SEERR REQUEST STATUS ============
       if (path === '/api/request-status' && method === 'GET') {
         const email = url.searchParams.get('email');
-        if (!email) return json({ error: 'Email is required.' }, 400, corsHeaders);
+        if (!email || email.length > 200) return json({ error: 'A valid email is required.' }, 400, corsHeaders);
         if (!env.SEERR_URL || !env.SEERR_API_KEY) return json({ error: 'Request status is not configured.' }, 500, corsHeaders);
         const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
         const limitKey = `rate:status:${clientIP}`;
@@ -591,7 +599,7 @@ export default {
 
       // ============ HOMEPAGE WIDGET (Bearer HOMEPAGE_TOKEN) ============
       if (path === '/api/requests' && method === 'GET') {
-        if ((request.headers.get('Authorization') || '') !== `Bearer ${env.HOMEPAGE_TOKEN}`)
+        if (!env.HOMEPAGE_TOKEN || request.headers.get('Authorization') !== `Bearer ${env.HOMEPAGE_TOKEN}`)
           return json({ error: 'Unauthorized' }, 401, corsHeaders);
         const list = await listWithCache(env, 'ACCESS_REQUESTS', { prefix: 'request:' });
         const pending = [];
